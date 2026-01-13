@@ -4,52 +4,57 @@ const puppeteer = require('puppeteer');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Increase limit to handle large HTML strings
-app.use(express.json({ limit: '10mb' }));
+// Allow large HTML payloads
+app.use(express.json({ limit: '50mb' }));
 
 app.post('/screenshot', async (req, res) => {
   const { html } = req.body;
 
   if (!html) {
-    return res.status(400).send('Missing "html" in request body.');
+    return res.status(400).json({ error: 'Missing "html" in request body.' });
   }
 
   let browser;
 
   try {
-    // Launch browser with arguments strictly required for container/cloud environments
+    console.log('Launching browser...');
     browser = await puppeteer.launch({
       headless: 'new',
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
-        '--single-process' // Helps with memory on smaller instances
+        '--disable-gpu'
       ]
     });
 
     const page = await browser.newPage();
+    
+    // Set viewport
+    await page.setViewport({ width: 1200, height: 1200 });
 
-    // Set viewport to a standard size (optional, adjust as needed)
-    await page.setViewport({ width: 1280, height: 720 });
+    console.log('Setting content...');
+    // 'domcontentloaded' is faster and less likely to timeout than 'networkidle0'
+    await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
-    // Load the HTML content
-    await page.setContent(html, { waitUntil: 'networkidle0' });
-
-    // Take the screenshot
+    console.log('Taking screenshot...');
     const screenshotBuffer = await page.screenshot({
       type: 'jpeg',
-      quality: 80, // Adjust quality (0-100)
-      fullPage: true // Captures the entire scrollable height
+      quality: 80,
+      fullPage: true
     });
 
-    // Send the image back
+    console.log('Success!');
     res.set('Content-Type', 'image/jpeg');
     res.send(screenshotBuffer);
 
   } catch (error) {
-    console.error('Screenshot error:', error);
-    res.status(500).send('Failed to generate screenshot.');
+    console.error('Screenshot failed:', error);
+    // Returns the ACTUAL error to n8n so you can debug it
+    res.status(500).json({ 
+        message: 'Failed to generate screenshot', 
+        error: error.message 
+    });
   } finally {
     if (browser) {
       await browser.close();
